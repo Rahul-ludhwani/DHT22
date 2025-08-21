@@ -1,0 +1,96 @@
+// TDS Sensor
+#define TDS_PIN 34
+
+// Water Flow Sensor
+#define FLOW_SENSOR_PIN 27
+volatile int pulseCount = 0;
+unsigned long lastFlowCalcTime = 0;
+float flowRate = 0.0;
+float totalLiters = 0.0;
+
+// For 1-hour reset
+unsigned long startHourMillis = 0;
+const unsigned long oneHour = 3600000; // 1 hour in ms
+
+// Ultrasonic Sensor
+#define TRIG_PIN 5
+#define ECHO_PIN 18
+
+// Constants
+#define TDS_VREF 3.3 // Vref for ESP32 ADC
+#define TDS_ADC_RESOLUTION 4095.0
+
+void IRAM_ATTR flowSensorInterrupt() {
+  pulseCount++;
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // TDS Sensor Setup
+  pinMode(TDS_PIN, INPUT);
+
+  // Flow Sensor Setup
+  pinMode(FLOW_SENSOR_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR_PIN), flowSensorInterrupt, RISING);
+
+  // Ultrasonic Sensor Setup
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  lastFlowCalcTime = millis();
+  startHourMillis = millis();
+}
+
+void loop() {
+  // --- TDS Sensor Reading ---
+  int tdsADC = analogRead(TDS_PIN);
+  float voltage = tdsADC * TDS_VREF / TDS_ADC_RESOLUTION;
+  float tdsValue = (133.42 * voltage * voltage * voltage 
+                   - 255.86 * voltage * voltage 
+                   + 857.39 * voltage) * 0.5;
+
+  // --- Water Flow Sensor Reading ---
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastFlowCalcTime >= 1000) { // every 1 second
+    flowRate = (pulseCount / 7.5); // adjust 7.5 for your sensor’s pulses per liter
+    totalLiters += (flowRate / 60.0); // flowRate is L/min → convert to liters per second
+    pulseCount = 0;
+    lastFlowCalcTime = currentMillis;
+  }
+
+  // Reset total liters every 1 hour
+  if (currentMillis - startHourMillis >= oneHour) {
+    totalLiters = 0.0;
+    startHourMillis = currentMillis;
+  }
+
+  // --- Ultrasonic Water Level Reading ---
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000); // timeout 30ms
+  float distance_cm = duration * 0.034 / 2;
+  float distance_in = distance_cm * 0.3937;
+
+  // --- Output to Serial Monitor ---
+  Serial.println("===== Sensor Readings =====");
+  Serial.print("TDS Value (ppm): ");
+  Serial.println(tdsValue);
+
+  Serial.print("Flow Rate (L/min): ");
+  Serial.println(flowRate);
+
+  Serial.print("Total Flow (Liters, 1-hour window): ");
+  Serial.println(totalLiters);
+
+  Serial.print("Water Level Distance (inches): ");
+  Serial.println(distance_in);
+
+  Serial.println("============================\n");
+
+  delay(1000);
+}
